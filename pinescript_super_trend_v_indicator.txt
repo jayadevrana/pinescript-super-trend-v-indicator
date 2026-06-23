@@ -1,0 +1,350 @@
+//@version=6
+indicator(title='Super trend V', overlay=true)
+
+InSession(sess) =>
+    na(time(timeframe.period, sess)) == false
+sessionHours = input.session(defval="0915-1520", title="Exit time")
+weekendsStr = ":1234567" 
+sec=InSession(sessionHours + weekendsStr)
+
+bgcolor(sec ? color.rgb(0, 230, 119, 74) : na)
+
+
+// start = input.time(timestamp("1 JUL 2020 00:00 +0530"),'Start time', group='Backtesting & Trading Control')
+// finish = input.time(timestamp("1 AUG 2050 00:00 +0530"),'End Time', group='Backtesting & Trading Control')
+// window() =>
+//     time >= start and time <= finish ? true : false
+
+
+source = close
+hilow = (high - low) * 100
+openclose = (close - open) * 100
+vol = volume / hilow
+spreadvol = openclose * vol
+VPT = spreadvol + ta.cum(spreadvol)
+window_len = 28
+
+v_len = 14
+price_spread = ta.stdev(high - low, window_len)
+
+v = spreadvol + ta.cum(spreadvol)
+smooth = ta.sma(v, v_len)
+v_spread = ta.stdev(v - smooth, window_len)
+shadow = (v - smooth) / v_spread * price_spread
+
+out = shadow > 0 ? high + shadow : low + shadow
+//
+src = out
+src1 = open
+src2 = low
+src3 = high
+tf = input(720)
+len = timeframe.isintraday and timeframe.multiplier >= 1 ? tf / timeframe.multiplier * 7 : timeframe.isintraday and timeframe.multiplier < 60 ? 60 / timeframe.multiplier * 24 * 7 : 7
+
+if len > 5000
+    len := 4999
+
+c = ta.ema(src,len)
+plot(c, color=color.new(color.red, 0))
+o = ta.ema(src1, len)
+plot(o, color=color.new(color.blue, 0))
+//h = ema(src3,len)
+//l=ema(src2,len)
+//
+col = c > o ? color.lime : color.orange
+vis = true
+vl = c
+ll = o
+m1 = plot(vl, color=col, linewidth=1)
+m2 = plot(vis ? ll : na, color=col, linewidth=2)
+
+fill(m1, m2, color=col)
+//
+
+vpt = ta.ema(out, len)
+
+// INPUTS //
+st_mult = input.float(1, title='SuperTrend Multiplier', minval=0, maxval=100, step=0.01)
+st_period = input.int(10, title='SuperTrend Period', minval=1)
+
+// CALCULATIONS //
+up_lev = vpt - st_mult * ta.atr(st_period)
+dn_lev = vpt + st_mult * ta.atr(st_period)
+
+up_trend = 0.0
+up_trend := close[1] > up_trend[1] ? math.max(up_lev, up_trend[1]) : up_lev
+
+down_trend = 0.0
+down_trend := close[1] < down_trend[1] ? math.min(dn_lev, down_trend[1]) : dn_lev
+
+// Calculate trend var
+trend = 0
+trend := close > down_trend[1] ? 1 : close < up_trend[1] ? -1 : nz(trend[1], 1)
+
+// Calculate SuperTrend Line
+st_line = trend == 1 ? up_trend : down_trend
+
+// Plotting
+plot(st_line[1], color=trend == 1 ? color.green : color.red, style=plot.style_cross, linewidth=2, title='SuperTrend')
+buy = ta.crossover(close, st_line) and close > o and sec
+sell = ta.crossunder(close, st_line) and close < o and sec
+//plotshape(crossover( close, st_line), location = location.belowbar, color = color.green,size=size.tiny)
+//plotshape(crossunder(close, st_line), location = location.abovebar, color = color.red,size=size.tiny)
+plotshape(buy, title='buy', text='Buy', color=color.new(color.green, 0), style=shape.labelup, location=location.belowbar, size=size.small, textcolor=color.new(color.white, 0))  //plot for buy icon
+plotshape(sell, title='sell', text='Sell', color=color.new(color.red, 0), style=shape.labeldown, location=location.abovebar, size=size.small, textcolor=color.new(color.white, 0))  //plot for sell icon
+
+
+
+use_sl = false//input(false, title='Use Candle High/Low as SL')
+
+Stop = input(10.0, title='StopLoss')
+
+ProfitPerc = input(defval=10.0, title='Profit')
+
+long_short = 0
+long_last = buy and (nz(long_short[1]) == 0 or nz(long_short[1]) == -1)
+short_last = sell and (nz(long_short[1]) == 0 or nz(long_short[1]) == 1)
+long_short := long_last ? 1 : short_last ? -1 : long_short[1]
+
+long_entered = false
+long_entered := long_entered[1]
+
+short_entered = false
+short_entered := short_entered[1]
+
+
+longPrice = ta.valuewhen(long_last, use_sl ? low : close, 0)
+shortPrice = ta.valuewhen(short_last, use_sl ? high : close, 0)
+
+
+longStop = use_sl ? longPrice : longPrice - Stop
+shortStop = use_sl ? shortPrice : shortPrice + Stop
+longTake = longPrice + ProfitPerc
+shortTake = shortPrice - ProfitPerc
+
+plot(long_short == 1 ? longStop : na, style=plot.style_linebr, color=color.new(color.red, 0), linewidth=1, title='Long Fixed SL')
+plot(long_short == -1 ? shortStop : na, style=plot.style_linebr, color=color.new(color.red, 0), linewidth=1, title='Short Fixed SL')
+plot(long_short == 1 ? longTake : na, style=plot.style_linebr, color=color.new(color.navy, 0), linewidth=1, title='Long Fixed TP')
+plot(long_short == -1 ? shortTake : na, style=plot.style_linebr, color=color.new(color.navy, 0), linewidth=1, title='Short Fixed TP')
+
+
+longBar1 = ta.barssince(long_last)
+longBar2 = longBar1 >= 1 ? true : false
+shortBar1 = ta.barssince(short_last)
+shortBar2 = shortBar1 >= 1 ? true : false
+
+longSLhit = long_short == 1 and longBar2 and low < longStop
+
+if long_entered and not sec
+    longSLhit := true
+    longSLhit
+
+plotshape(longSLhit and not(sell and not short_entered and long_entered), style=shape.labelup, location=location.belowbar, color=color.new(color.gray, 0), size=size.tiny, title='Stop Loss', text='Long SL', textcolor=color.new(color.white, 0))
+shortSLhit = long_short == -1 and shortBar2 and high > shortStop
+
+
+if short_entered and not sec
+    shortSLhit := true
+    shortSLhit
+
+plotshape(shortSLhit and not(buy and not long_entered and short_entered), style=shape.labeldown, location=location.abovebar, color=color.new(color.gray, 0), size=size.tiny, title='Stop Loss', text='Short SL', textcolor=color.new(color.white, 0))
+
+
+longTPhit = long_short == 1 and longBar2 and high > longTake
+plotshape(longTPhit, style=shape.labeldown, location=location.abovebar, color=color.new(color.navy, 0), size=size.tiny, title='Target', text='Long TP', textcolor=color.new(color.white, 0))
+shortTPhit = long_short == -1 and shortBar2 and low < shortTake
+plotshape(shortTPhit, style=shape.labelup, location=location.belowbar, color=color.new(color.navy, 0), size=size.tiny, title='Target', text='Short TP', textcolor=color.new(color.white, 0))
+
+long_short := (long_short == 1 or long_short == 0) and longBar2 and (longSLhit or longTPhit) ? 0 : (long_short == -1 or long_short == 0) and shortBar2 and (shortSLhit or shortTPhit) ? 0 : long_short
+
+// plotshape(buy and not(long_entered) and (short_entered), color = color.green , style = shape.labelup , text = "FA Buy" , textcolor = color.white , location = location.belowbar)
+// plotshape(sell and not(short_entered)  and (long_entered), color = color.red , style = shape.labeldown , text = "FA Sell" , textcolor = color.white , location = location.abovebar)
+rev = input(64.0, title='Reverse Limit')
+
+// alertcondition(condition=buy and  not(long_entered)  and (short_entered), title="Fully Algo Buy")
+// alertcondition(condition=sell and  not(short_entered)  and (long_entered), title="Fully Algo sell")
+
+
+qn = 0.01
+qn := nz(qn[1])
+
+if shortSLhit or longSLhit or ((short_entered and buy) or (long_entered and sell))
+    qn := qn*2
+    qn
+
+
+if longTPhit or shortTPhit //or qn > rev
+    qn := 0.01
+    qn
+
+if qn > rev
+    qn := rev
+
+if sec[1] == false and sec == true
+    qn := 0.01
+
+alertcondition(condition=buy and not long_entered, title='Buy')
+alertcondition(condition=sell and not short_entered, title='Sell')
+
+
+symbol = input("BTCUSD")
+
+
+buy_alert ='{"type": "buy","symbol": "'+symbol+'","volume":'+str.tostring(qn)+',"closeprevious":true,"price":"'+str.tostring(close)+'"}'
+sell_alert = '{"type": "sell","symbol": "'+symbol+'","volume":'+str.tostring(qn)+',"closeprevious":true,"price":"'+str.tostring(close)+'"}'
+
+
+
+
+exit_alert = '{"symbol": "'+symbol+'","closeprevious":true,"price":"'+str.tostring(close)+'"}'
+
+
+if buy and not long_entered
+    alert(buy_alert,alert.freq_once_per_bar_close)
+
+if sell and not short_entered
+    alert(sell_alert,alert.freq_once_per_bar_close)
+
+if (longSLhit or longTPhit or shortSLhit or shortTPhit)
+    alert(exit_alert,alert.freq_once_per_bar)
+
+// if not sec
+//     strategy.close_all(alert_message = exit_alert)
+
+// bgcolor(sec ? #ff525246 : na)
+
+plot(qn)
+
+// if buy
+//     strategy.entry('buy', strategy.long, qty=qn*10,alert_message = buy_alert)
+//     strategy.exit('Stop', 'buy', limit=longTake, stop=longStop,alert_message = exit_alert)
+
+// if sell
+//     strategy.entry('sell', strategy.short, qty=qn*10,alert_message = sell_alert)
+//     strategy.exit('Stop', 'sell', limit=shortTake, stop=shortStop,alert_message = exit_alert)
+
+
+// if not sec 
+//     strategy.close_all(alert_message = exit_alert)
+
+
+if long_last
+    long_entered := true
+    short_entered := false
+    short_entered
+if short_last
+    short_entered := true
+    long_entered := false
+    long_entered
+
+alertcondition(condition=longSLhit and not(sell and not short_entered and long_entered), title='Long SL')
+alertcondition(condition=shortSLhit and not(buy and not long_entered and short_entered), title='Short SL')
+
+alertcondition(condition=longTPhit, title='Long TP')
+alertcondition(condition=shortTPhit, title='Short TP')
+
+
+if longSLhit or longTPhit //or strategy.position_size == 0
+    long_entered := false
+    long_entered
+
+if shortSLhit or shortTPhit //or strategy.position_size == 0
+    short_entered := false
+    short_entered
+
+
+
+// strategy.close('buy', when=longTPhit or sell or longSLhit, comment='Target')
+// strategy.close('sell', when=shortSLhit or shortTPhit or buy, comment='Stop Loss')
+
+// strategy.cancel('buy', when=longTPhit or sell or longSLhit)
+// strategy.cancel('sell', when=shortSLhit or shortTPhit or buy)
+
+
+
+
+
+
+
+
+
+
+
+// qn = 1
+// qn := (qn[1])
+
+
+
+// if strategy.losstrades > strategy.losstrades[1] //or long_entered[1] and sell or short_entered[1] and buy
+//     qn := qn * 2
+//     qn
+
+
+// plot(strategy.position_avg_price)
+
+
+// if st_line[1]
+
+// if buy
+//     strategy.entry("buy",strategy.long,qty = qn,comment = str.tostring(close))
+
+
+// if sell
+//     strategy.entry("sell",strategy.short,qty = qn,comment = str.tostring(close))
+
+// plotshape(strategy.losstrades > strategy.losstrades[1] )
+// plotshape(strategy.wintrades > strategy.wintrades[1])
+
+
+// //
+// multiplier = input.float(title='TP', defval=2, minval=1)
+// src5 = close
+// len5 = input.int(title='TP length', defval=150, minval=1)
+// offset = 0
+
+// calcSlope(src5, len5) =>
+//     sumX = 0.0
+//     sumY = 0.0
+//     sumXSqr = 0.0
+//     sumXY = 0.0
+//     for i = 1 to len5 by 1
+//         val = src5[len5 - i]
+//         per = i + 1.0
+//         sumX += per
+//         sumY += val
+//         sumXSqr += per * per
+//         sumXY += val * per
+//         sumXY
+
+
+//     slope = (len5 * sumXY - sumX * sumY) / (len5 * sumXSqr - sumX * sumX)
+//     average = sumY / len5
+//     intercept = average - slope * sumX / len5 + slope
+//     [slope, average, intercept]
+
+// var float tmp = na
+// [s, a, i] = calcSlope(src5, len5)
+
+// vwap1 = i + s * (len5 - offset)
+// sdev = ta.stdev(close, len5)
+// dev = multiplier * sdev
+// top = vwap1 + dev
+// bott = vwap1 - dev
+
+// //
+// z1 = vwap1 + dev
+// x1 = vwap1 - dev
+
+// low1 = ta.crossover(close, x1)
+// high1 = ta.crossunder(close, z1)
+
+// plotshape(low1, title='low', text='TP', color=color.new(color.red, 0), style=shape.labelup, location=location.belowbar, size=size.small, textcolor=color.new(color.white, 0))  //plot for buy icon
+// plotshape(high1, title='high', text='TP', color=color.new(color.green, 0), style=shape.labeldown, location=location.abovebar, size=size.small, textcolor=color.new(color.white, 0))  //plot for sell icon
+
+
+// /////// Alerts /////
+// alertcondition(buy, title='buy')
+// alertcondition(sell, title='sell')
+// alertcondition(low1, title='sell tp')
+// alertcondition(high1, title='buy tp')
+
